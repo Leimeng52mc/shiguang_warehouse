@@ -69,10 +69,10 @@ async function showSemesterSelection() {
 async function showCampusSelection() {
     const campuses = ["南湖校区", "浑南校区"];
     try {
-        const idx = await window.AndroidBridgePromise.showSingleSelection("选择你所在的校区", JSON.stringify(campuses), 2);
+        const idx = await window.shiguangBridgePromise.showSingleSelection("选择你所在的校区", JSON.stringify(campuses), 2);
         return idx !== -1 ? campuses[idx] : false;
     } catch(e) {
-        AndroidBridge.showToast("显示校区列表出错：" + e.message);
+        window.shiguangBridge.showToast("显示校区列表出错：" + e.message);
         return false;
     }
 }
@@ -237,34 +237,48 @@ function parseWeeksString(weeksStr) {
 function convertApiResponseToLessons(arrangedList) {
     const lessons = [];
     for (const item of arrangedList) {
-        // 必要字段检查
         const day = item.dayOfWeek;
         const startSection = item.beginSection;
         const endSection = item.endSection;
         if (!day || !startSection || !endSection) continue;
 
-        const titleDetail = item.titleDetail;
-        if (!Array.isArray(titleDetail) || titleDetail.length < 2) {
-            console.warn("titleDetail 无效，跳过课程:", item);
-            continue;
+        // ---- 1. 获取课程名 ----
+        let name = item.courseName || "";
+        // 如果 courseName 为空（极端情况），从 titleDetail 补全
+        if (!name) {
+            const td = item.titleDetail || [];
+            if (td.length >= 2) {
+                // 实验课 td[0] 通常以 "[实]" 开头，直接使用
+                if (td[0].includes("[实]") || td[0].includes("实验")) {
+                    name = td[0];
+                } else {
+                    // 理论课：取 td[1] 空格前的部分（如 "机器学习"）
+                    const idx = td[1].indexOf(' ');
+                    name = idx !== -1 ? td[1].substring(0, idx) : td[1];
+                }
+            } else if (td.length === 1) {
+                name = td[0];
+            }
         }
 
-        // 1. 课程名：从 titleDetail[0] 的第一个空格前提取
-        const title0 = titleDetail[0] || "";
-        const firstSpaceIdx = title0.indexOf(' ');
-        const name = firstSpaceIdx !== -1 ? title0.substring(0, firstSpaceIdx) : title0;
-        if (!name) continue;
+        // ---- 2. 获取周次-教师-地点字符串 ----
+        let weekTeacherPlace = item.titleWeekTeacherClassroomDetail?.[0] || "";
+        // 若该字段缺失，回退到 titleDetail 的对应项
+        if (!weekTeacherPlace) {
+            const td = item.titleDetail || [];
+            if (td.length >= 3) weekTeacherPlace = td[2];      // 理论课
+            else if (td.length === 2) weekTeacherPlace = td[1]; // 实验课
+        }
+        if (!weekTeacherPlace) continue; // 无有效信息则跳过
 
-        // 2. 解析 titleDetail[1]  => 周次字符串、教师、地点
-        const title1 = titleDetail[1] || "";
-        const tokens = title1.trim().split(/\s+/); // 按空白符分割
+        // ---- 3. 解析 tokens ----
+        const tokens = weekTeacherPlace.trim().split(/\s+/);
         if (tokens.length < 1) continue;
-        const weeksStr = tokens[0];                 // 例如 "1-8周"
+        const weeksStr = tokens[0];               // 如 "1-8周"
         const teacher = tokens[1] || "";
-        // 地点：从第2个token开始到末尾，用空格重新拼接
         const position = tokens.slice(2).join(' ');
 
-        // 3. 解析周次字符串为数字数组
+        // ---- 4. 解析周次数组 ----
         const weeks = parseWeeksString(weeksStr);
         if (weeks.length === 0) {
             console.warn(`周次解析失败: ${weeksStr}, 课程: ${name}`);
@@ -295,7 +309,7 @@ function convertApiResponseToLessons(arrangedList) {
 async function fetchCoursesFromAPI(semesterCode, retries=2) {
     const url = 'https://jwxt.neu.edu.cn/jwapp/sys/kbapp/api/wdkbcx/getMyScheduleDetail.do';
     const xnxqdm = semesterCode;
-    const xqdm = '01';
+    const xqdm = '';//神秘参数，设为空就啥时候都能获得课表数据，尼东教务系统真是神了。
     for (let i=1; i<=retries; i++) {
         try {
             const ctrl = new AbortController();
@@ -324,7 +338,7 @@ async function fetchCoursesFromAPI(semesterCode, retries=2) {
  * @param {Array<object>} lessons 课程对象数组
  */
 async function SaveCourses(lessons) {
-    await window.AndroidBridgePromise.saveImportedCourses(JSON.stringify(lessons));
+    await window.shiguangBridgePromise.saveImportedCourses(JSON.stringify(lessons));
 }
 
 /**
@@ -335,7 +349,7 @@ async function importTimeSlotsByCampus(campus) {
     const hunNan = [{"number":1,"startTime":"08:30","endTime":"09:15"},{"number":2,"startTime":"09:25","endTime":"10:10"},{"number":3,"startTime":"10:30","endTime":"11:15"},{"number":4,"startTime":"11:25","endTime":"12:10"},{"number":5,"startTime":"14:00","endTime":"14:45"},{"number":6,"startTime":"14:55","endTime":"15:40"},{"number":7,"startTime":"16:00","endTime":"16:45"},{"number":8,"startTime":"16:55","endTime":"17:40"},{"number":9,"startTime":"18:30","endTime":"19:15"},{"number":10,"startTime":"19:25","endTime":"20:10"},{"number":11,"startTime":"20:30","endTime":"21:15"},{"number":12,"startTime":"21:15","endTime":"22:10"}];
     const nanHu = [{"number":1,"startTime":"08:00","endTime":"08:45"},{"number":2,"startTime":"08:55","endTime":"09:40"},{"number":3,"startTime":"10:00","endTime":"10:45"},{"number":4,"startTime":"10:55","endTime":"11:40"},{"number":5,"startTime":"14:00","endTime":"14:45"},{"number":6,"startTime":"14:55","endTime":"15:40"},{"number":7,"startTime":"16:00","endTime":"16:45"},{"number":8,"startTime":"16:55","endTime":"17:40"},{"number":9,"startTime":"18:30","endTime":"19:15"},{"number":10,"startTime":"19:25","endTime":"20:10"},{"number":11,"startTime":"20:20","endTime":"21:05"},{"number":12,"startTime":"21:15","endTime":"22:00"}];
     const slots = campus === "南湖校区" ? nanHu : hunNan;
-    await window.AndroidBridgePromise.savePresetTimeSlots(JSON.stringify(slots));
+    await window.shiguangBridgePromise.savePresetTimeSlots(JSON.stringify(slots));
 }
 
 /**
@@ -343,7 +357,7 @@ async function importTimeSlotsByCampus(campus) {
  */
 async function SaveConfig() {
     const cfg = { semesterTotalWeeks:18, defaultClassDuration:45, defaultBreakDuration:10, firstDayOfWeek:7 };
-    await window.AndroidBridgePromise.saveCourseConfig(JSON.stringify(cfg));
+    await window.shiguangBridgePromise.saveCourseConfig(JSON.stringify(cfg));
 }
 
 /**
@@ -351,46 +365,46 @@ async function SaveConfig() {
  * 最后通知Android任务完成
  */
 async function runAllDemosSequentially() {
-    AndroidBridge.showToast("开始导入课表...");
+    window.shiguangBridge.showToast("开始导入课表...");
     const campus = await showCampusSelection();
-    if (!campus) { AndroidBridge.showToast("已取消导入"); return; }
+    if (!campus) { window.shiguangBridge.showToast("已取消导入"); return; }
     const semester = await showSemesterSelection();
-    if (!semester) { AndroidBridge.showToast("已取消导入"); return; }
+    if (!semester) { window.shiguangBridge.showToast("已取消导入"); return; }
     
-    AndroidBridge.showToast("正在获取课表数据...");
+    window.shiguangBridge.showToast("正在获取课表数据...");
     let lessons;
     try {
         lessons = await fetchCoursesFromAPI(semester);
-        if (!lessons.length) { AndroidBridge.showToast("未获取到任何课程"); return; }
+        if (!lessons.length) { window.shiguangBridge.showToast("未获取到任何课程"); return; }
         console.log(`获取到 ${lessons.length} 门课程`);
     } catch(e) {
-        AndroidBridge.showToast("获取课表失败: "+e.message);
+        window.shiguangBridge.showToast("获取课表失败: "+e.message);
         return;
     }
     await SaveCourses(lessons);
     await importTimeSlotsByCampus(campus);
     await SaveConfig();
-    AndroidBridge.showToast("课表导入完成！");
+    window.shiguangBridge.showToast("课表导入完成！");
     
     const importExams = await askImportExams();
     if (importExams) {
-        AndroidBridge.showToast("正在获取考试数据...");
+        window.shiguangBridge.showToast("正在获取考试数据...");
         try {
             const examLessons = await fetchExamsFromAPI(semester);
             if (examLessons.length === 0) {
-                AndroidBridge.showToast("未获取到考试数据");
+                window.shiguangBridge.showToast("未获取到考试数据");
             } else {
                 const allLessons = [...lessons, ...examLessons];
                 await SaveCourses(allLessons);
-                AndroidBridge.showToast(`已导入 ${examLessons.length} 条考试记录（合并至课表）`);
+                window.shiguangBridge.showToast(`已导入 ${examLessons.length} 条考试记录（合并至课表）`);
             }
         } catch(e) {
-            AndroidBridge.showToast("导入考试失败: "+e.message);
+            window.shiguangBridge.showToast("导入考试失败: "+e.message);
             console.error(e);
         }
     }
     
-    AndroidBridge.notifyTaskCompletion();
+    window.shiguangBridge.notifyTaskCompletion();
 }
 
 // 启动主流程
